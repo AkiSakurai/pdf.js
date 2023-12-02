@@ -1818,7 +1818,12 @@ class CanvasGraphics {
     }
 
     const intersect = this.current.getClippedPathBoundingBox();
-    if (this.contentVisible && intersect !== null) {
+    if (
+      this.contentVisible &&
+      intersect !== null &&
+      intersect[2] - intersect[0] > 0 &&
+      intersect[3] - intersect[1] > 0
+    ) {
       if (this.pendingEOFill) {
         ctx.fill("evenodd");
         this.pendingEOFill = false;

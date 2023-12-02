@@ -181,6 +181,11 @@ const defaultOptions = {
     value: 16777216,
     kind: OptionKind.VIEWER,
   },
+  maxTiles: {
+    /** @type {number} */
+    value: 512,
+    kind: OptionKind.VIEWER,
+  },
   forcePageColors: {
     /** @type {boolean} */
     value: false,

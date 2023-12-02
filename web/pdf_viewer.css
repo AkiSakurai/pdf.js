@@ -146,20 +146,20 @@
 }
 /*#endif*/
 
-.pdfViewer .page canvas {
+.pdfViewer .page .tileLayer {
   margin: 0;
   display: block;
 }
 
-.pdfViewer .page canvas .structTree {
+.pdfViewer .page .tileLayer .structTree {
   contain: strict;
 }
 
-.pdfViewer .page canvas[hidden] {
+.pdfViewer .page .tileLayer[hidden] {
   display: none;
 }
 
-.pdfViewer .page canvas[zooming] {
+.pdfViewer .page .tileLayer[zooming] {
   width: 100%;
   height: 100%;
 }

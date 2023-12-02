@@ -860,6 +860,7 @@ export {
   AutoPrintRegExp,
   backtrackBeforeAllVisibleElements, // only exported for testing
   binarySearchFirstItem,
+  clamp,
   CursorTool,
   DEFAULT_SCALE,
   DEFAULT_SCALE_DELTA,

@@ -446,6 +446,7 @@ const PDFViewerApplication = {
       enablePrintAutoRotate: AppOptions.get("enablePrintAutoRotate"),
       isOffscreenCanvasSupported,
       maxCanvasPixels: AppOptions.get("maxCanvasPixels"),
+      maxTiles: AppOptions.get("maxTiles"),
       enablePermissions: AppOptions.get("enablePermissions"),
       pageColors,
     });

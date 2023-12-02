@@ -39,6 +39,7 @@ import {
   roundToDivide,
   TextLayerMode,
 } from "./ui_utils.js";
+
 import { AnnotationEditorLayerBuilder } from "./annotation_editor_layer_builder.js";
 import { AnnotationLayerBuilder } from "./annotation_layer_builder.js";
 import { compatibilityParams } from "./app_options.js";
@@ -49,6 +50,7 @@ import { StructTreeLayerBuilder } from "./struct_tree_layer_builder.js";
 import { TextAccessibilityManager } from "./text_accessibility.js";
 import { TextHighlighter } from "./text_highlighter.js";
 import { TextLayerBuilder } from "./text_layer_builder.js";
+import { TileLayer } from "./tile_canvas.js";
 import { XfaLayerBuilder } from "./xfa_layer_builder.js";
 
 /**
@@ -77,6 +79,8 @@ import { XfaLayerBuilder } from "./xfa_layer_builder.js";
  * @property {number} [maxCanvasPixels] - The maximum supported canvas size in
  *   total pixels, i.e. width * height. Use `-1` for no limit, or `0` for
  *   CSS-only zooming. The default value is 4096 * 4096 (16 mega-pixels).
+ * @property {number} [maxTiles] - The maximum supported tiles,
+ *   default is 1.
  * @property {Object} [pageColors] - Overwrites background and foreground colors
  *   with user defined ones in order to improve readability in high contrast
  *   mode.
@@ -86,6 +90,7 @@ import { XfaLayerBuilder } from "./xfa_layer_builder.js";
  */
 
 const MAX_CANVAS_PIXELS = compatibilityParams.maxCanvasPixels || 16777216;
+const MAX_TILE_SIZE = compatibilityParams.maxTiles || 1;
 
 const DEFAULT_LAYER_PROPERTIES =
   typeof PDFJSDev === "undefined" || !PDFJSDev.test("COMPONENTS")
@@ -157,6 +162,7 @@ class PDFPageView {
     this.isOffscreenCanvasSupported =
       options.isOffscreenCanvasSupported ?? true;
     this.maxCanvasPixels = options.maxCanvasPixels ?? MAX_CANVAS_PIXELS;
+    this.maxTiles = options.maxTiles ?? MAX_TILE_SIZE;
     this.pageColors = options.pageColors || null;
 
     this.eventBus = options.eventBus;
@@ -448,7 +454,7 @@ class PDFPageView {
     if (treeDom) {
       // Pause translation when inserting the structTree in the DOM.
       this.l10n.pause();
-      this.canvas?.append(treeDom);
+      this.tileLayer?.element.append(treeDom);
       this.l10n.resume();
     }
     this.structTreeLayer?.show();
@@ -471,16 +477,16 @@ class PDFPageView {
     if (!this.zoomLayer) {
       return;
     }
-    const zoomLayerCanvas = this.zoomLayer.firstChild;
-    this.#viewportMap.delete(zoomLayerCanvas);
+    const zoomLayerDiv = this.zoomLayer.element;
+    this.#viewportMap.delete(zoomLayerDiv);
+
     // Zeroing the width and height causes Firefox to release graphics
     // resources immediately, which can greatly reduce memory consumption.
-    zoomLayerCanvas.width = 0;
-    zoomLayerCanvas.height = 0;
+    this.zoomLayer.clear();
 
     if (removeFromDOM) {
       // Note: `ChildNode.remove` doesn't throw if the parent node is undefined.
-      this.zoomLayer.remove();
+      this.zoomLayer.element.remove();
     }
     this.zoomLayer = null;
   }
@@ -543,13 +549,12 @@ class PDFPageView {
     this.structTreeLayer?.hide();
 
     if (!zoomLayerNode) {
-      if (this.canvas) {
-        this.#viewportMap.delete(this.canvas);
+      if (this.tileLayer) {
+        this.#viewportMap.delete(this.tileLayer.element);
         // Zeroing the width and height causes Firefox to release graphics
         // resources immediately, which can greatly reduce memory consumption.
-        this.canvas.width = 0;
-        this.canvas.height = 0;
-        delete this.canvas;
+        this.tileLayer.clear();
+        delete this.tileLayer;
       }
       this._resetZoomLayer();
     }
@@ -610,7 +615,7 @@ class PDFPageView {
       this._container?.style.setProperty("--scale-factor", this.viewport.scale);
     }
 
-    if (this.canvas) {
+    if (this.tileLayer) {
       let onlyCssZoom = false;
       if (this.#hasRestrictedScaling) {
         if (
@@ -653,7 +658,7 @@ class PDFPageView {
         }
 
         this.cssTransform({
-          target: this.canvas,
+          target: this.tileLayer.element,
           redrawAnnotationLayer: true,
           redrawAnnotationEditorLayer: true,
           redrawXfaLayer: true,
@@ -675,13 +680,13 @@ class PDFPageView {
         });
         return;
       }
-      if (!this.zoomLayer && !this.canvas.hidden) {
-        this.zoomLayer = this.canvas.parentNode;
-        this.zoomLayer.style.position = "absolute";
+      if (!this.zoomLayer && !this.tileLayer.hidden) {
+        this.zoomLayer = this.tileLayer;
+        this.zoomLayer.element.parentNode.style.position = "absolute";
       }
     }
     if (this.zoomLayer) {
-      this.cssTransform({ target: this.zoomLayer.firstChild });
+      this.cssTransform({ target: this.zoomLayer.element });
     }
     this.reset({
       keepZoomLayer: true,
@@ -753,9 +758,9 @@ class PDFPageView {
     // Scale target (canvas), its wrapper and page container.
     if (
       (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) &&
-      !(target instanceof HTMLCanvasElement)
+      !(target instanceof HTMLDivElement)
     ) {
-      throw new Error("Expected `target` to be a canvas.");
+      throw new Error("Expected `target` to be a HTMLDivElement.");
     }
     if (!target.hasAttribute("zooming")) {
       target.setAttribute("zooming", true);
@@ -777,6 +782,7 @@ class PDFPageView {
         scaleX = height / width;
         scaleY = width / height;
       }
+
       target.style.transform = `rotate(${relativeRotation}deg) scale(${scaleX}, ${scaleY})`;
     }
 
@@ -935,27 +941,7 @@ class PDFPageView {
     };
 
     const { width, height } = viewport;
-    const canvas = document.createElement("canvas");
-    canvas.setAttribute("role", "presentation");
 
-    // Keep the canvas hidden until the first draw callback, or until drawing
-    // is complete when `!this.renderingQueue`, to prevent black flickering.
-    canvas.hidden = true;
-    const hasHCM = !!(pageColors?.background && pageColors?.foreground);
-
-    let showCanvas = isLastShow => {
-      // In HCM, a final filter is applied on the canvas which means that
-      // before it's applied we've normal colors. Consequently, to avoid to have
-      // a final flash we just display it once all the drawing is done.
-      if (!hasHCM || isLastShow) {
-        canvas.hidden = false;
-        showCanvas = null; // Only invoke the function once.
-      }
-    };
-    canvasWrapper.append(canvas);
-    this.canvas = canvas;
-
-    const ctx = canvas.getContext("2d", { alpha: false });
     const outputScale = (this.outputScale = new OutputScale());
 
     if (
@@ -969,8 +955,11 @@ class PDFPageView {
       outputScale.sy *= invScale;
       this.#hasRestrictedScaling = true;
     } else if (this.maxCanvasPixels > 0) {
+      const maxTiledCanvasPixels = this.maxCanvasPixels * this.maxTiles;
+
+      console.log(this.maxCanvasPixels, this.maxTiles);
       const pixelsInViewport = width * height;
-      const maxScale = Math.sqrt(this.maxCanvasPixels / pixelsInViewport);
+      const maxScale = Math.sqrt(maxTiledCanvasPixels / pixelsInViewport);
       if (outputScale.sx > maxScale || outputScale.sy > maxScale) {
         outputScale.sx = maxScale;
         outputScale.sy = maxScale;
@@ -982,21 +971,49 @@ class PDFPageView {
     const sfx = approximateFraction(outputScale.sx);
     const sfy = approximateFraction(outputScale.sy);
 
-    canvas.width = roundToDivide(width * outputScale.sx, sfx[0]);
-    canvas.height = roundToDivide(height * outputScale.sy, sfy[0]);
-    const { style } = canvas;
+    const canvasWidth = roundToDivide(width * outputScale.sx, sfx[0]);
+    const canvasHeight = roundToDivide(height * outputScale.sy, sfy[0]);
+
+    const tileLayer = new TileLayer(
+      canvasWidth,
+      canvasHeight,
+      this.maxCanvasPixels,
+      sfx,
+      sfy
+    );
+
+    tileLayer.setAttribute("role", "presentation");
+
+    // Keep the canvas hidden until the first draw callback, or until drawing
+    // is complete when `!this.renderingQueue`, to prevent black flickering.
+    tileLayer.hidden = true;
+    const hasHCM = !!(pageColors?.background && pageColors?.foreground);
+
+    let showCanvas = isLastShow => {
+      // In HCM, a final filter is applied on the canvas which means that
+      // before it's applied we've normal colors. Consequently, to avoid to have
+      // a final flash we just display it once all the drawing is done.
+      if (!hasHCM || isLastShow) {
+        tileLayer.hidden = false;
+        showCanvas = null; // Only invoke the function once.
+      }
+    };
+    canvasWrapper.append(tileLayer.element);
+    this.tileLayer = tileLayer;
+
+    const { style } = tileLayer.element;
     style.width = roundToDivide(width, sfx[1]) + "px";
     style.height = roundToDivide(height, sfy[1]) + "px";
 
     // Add the viewport so it's known what it was originally drawn with.
-    this.#viewportMap.set(canvas, viewport);
+    this.#viewportMap.set(tileLayer.element, viewport);
 
     // Rendering area
     const transform = outputScale.scaled
       ? [outputScale.sx, 0, 0, outputScale.sy, 0, 0]
       : null;
+
     const renderContext = {
-      canvasContext: ctx,
       transform,
       viewport,
       annotationMode: this.#annotationMode,
@@ -1004,7 +1021,10 @@ class PDFPageView {
       annotationCanvasMap: this._annotationCanvasMap,
       pageColors,
     };
-    const renderTask = (this.renderTask = this.pdfPage.render(renderContext));
+    const renderTask = (this.renderTask = tileLayer.render(
+      this.pdfPage,
+      renderContext
+    ));
     renderTask.onContinue = renderContinueCallback;
 
     const resultPromise = renderTask.promise.then(
@@ -1102,8 +1122,12 @@ class PDFPageView {
   get thumbnailCanvas() {
     const { directDrawing, initialOptionalContent, regularAnnotations } =
       this.#useThumbnailCanvas;
+    const canvas =
+      this.tileLayer?.tiles?.length === 1
+        ? this.tileLayer.tiles[0].canvas
+        : null;
     return directDrawing && initialOptionalContent && regularAnnotations
-      ? this.canvas
+      ? canvas
       : null;
   }
 }

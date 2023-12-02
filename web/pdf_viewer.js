@@ -284,6 +284,7 @@ class PDFViewer {
     this.isOffscreenCanvasSupported =
       options.isOffscreenCanvasSupported ?? true;
     this.maxCanvasPixels = options.maxCanvasPixels;
+    this.maxTiles = options.maxTiles;
     this.l10n = options.l10n || NullL10n;
     this.#enablePermissions = options.enablePermissions || false;
     this.pageColors = options.pageColors || null;
@@ -910,6 +911,7 @@ class PDFViewer {
             imageResourcesPath: this.imageResourcesPath,
             isOffscreenCanvasSupported: this.isOffscreenCanvasSupported,
             maxCanvasPixels: this.maxCanvasPixels,
+            maxTiles: this.maxTiles,
             pageColors: this.pageColors,
             l10n: this.l10n,
             layerProperties: this._layerProperties,
