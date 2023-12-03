@@ -1014,6 +1014,9 @@ function buildGeneric(defines, dir) {
     gulp
       .src("web/compressed.tracemonkey-pldi-09.pdf")
       .pipe(gulp.dest(dir + "web")),
+    gulp
+      .src("web/issue6419_NYC_full_trackmap.pdf")
+      .pipe(gulp.dest(dir + "web")),
   ]);
 }
 
